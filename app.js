@@ -1,5 +1,8 @@
-// Инициализация VK Bridge
-const vkBridge = window.vkBridge;
+// Инициализация VK Bridge с таймаутом
+let vkBridge = null;
+try {
+    vkBridge = window.vkBridge;
+} catch(e) {}
 
 // Состояние игры
 const gameState = {
@@ -25,62 +28,13 @@ const gameState = {
         expReward: 50
     },
     ores: {
-        coal: {
-            name: 'Угольная руда',
-            icon: '🪨',
-            required: 50,
-            value: 10,
-            expReward: 50,
-            unlockLevel: 1
-        },
-        iron: {
-            name: 'Железная руда',
-            icon: '⚙️',
-            required: 100,
-            value: 25,
-            expReward: 100,
-            unlockLevel: 3
-        },
-        gold: {
-            name: 'Золотая руда',
-            icon: '🌟',
-            required: 200,
-            value: 60,
-            expReward: 200,
-            unlockLevel: 5
-        },
-        diamond: {
-            name: 'Алмазная руда',
-            icon: '💎',
-            required: 400,
-            value: 150,
-            expReward: 400,
-            unlockLevel: 8
-        },
-        emerald: {
-            name: 'Изумрудная руда',
-            icon: '💚',
-            required: 800,
-            value: 350,
-            expReward: 800,
-            unlockLevel: 12
-        },
-        obsidian: {
-            name: 'Обсидиан',
-            icon: '🖤',
-            required: 1500,
-            value: 800,
-            expReward: 1500,
-            unlockLevel: 16
-        },
-        mythril: {
-            name: 'Мифриловая руда',
-            icon: '🔮',
-            required: 3000,
-            value: 2000,
-            expReward: 3000,
-            unlockLevel: 20
-        }
+        coal: { name: 'Угольная руда', icon: '🪨', required: 50, value: 10, expReward: 50, unlockLevel: 1 },
+        iron: { name: 'Железная руда', icon: '⚙️', required: 100, value: 25, expReward: 100, unlockLevel: 3 },
+        gold: { name: 'Золотая руда', icon: '🌟', required: 200, value: 60, expReward: 200, unlockLevel: 5 },
+        diamond: { name: 'Алмазная руда', icon: '💎', required: 400, value: 150, expReward: 400, unlockLevel: 8 },
+        emerald: { name: 'Изумрудная руда', icon: '💚', required: 800, value: 350, expReward: 800, unlockLevel: 12 },
+        obsidian: { name: 'Обсидиан', icon: '🖤', required: 1500, value: 800, expReward: 1500, unlockLevel: 16 },
+        mythril: { name: 'Мифриловая руда', icon: '🔮', required: 3000, value: 2000, expReward: 3000, unlockLevel: 20 }
     },
     inventory: {},
     achievements: {},
@@ -134,15 +88,27 @@ const elements = {
     particles: document.getElementById('particles')
 };
 
+// Функция с таймаутом для VK Bridge
+async function callVK(method, params = {}) {
+    if (!vkBridge) return null;
+    try {
+        const result = await Promise.race([
+            vkBridge.send(method, params),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+        ]);
+        return result;
+    } catch(e) {
+        console.warn('VK Bridge call failed:', method, e);
+        return null;
+    }
+}
+
 // Инициализация приложения
 async function initApp() {
-    try {
-        // Инициализация VK Bridge
-        if (vkBridge) {
-            await vkBridge.send('VKWebAppInit');
-            
-            // Получение данных пользователя
-            const userInfo = await vkBridge.send('VKWebAppGetUserInfo');
+    // Пытаемся получить данные пользователя, но не блокируем загрузку
+    if (vkBridge) {
+        try {
+            const userInfo = await callVK('VKWebAppGetUserInfo');
             if (userInfo) {
                 gameState.player.name = userInfo.first_name || 'Игрок';
                 gameState.player.avatar = userInfo.photo_100 || '👷';
@@ -151,24 +117,16 @@ async function initApp() {
                     elements.playerAvatar.innerHTML = `<img src="${userInfo.photo_100}" style="width: 100%; height: 100%; border-radius: 50%;">`;
                 }
             }
-        }
-        
-        // Загрузка сохраненной игры
-        loadGame();
-        
-        // Показ игрового экрана
-        setTimeout(() => {
-            elements.loadingScreen.classList.remove('active');
-            elements.gameScreen.classList.add('active');
-            updateUI();
-        }, 2000);
-        
-    } catch (error) {
-        console.error('Ошибка инициализации:', error);
-        elements.loadingScreen.classList.remove('active');
-        elements.gameScreen.classList.add('active');
-        updateUI();
+        } catch(e) {}
     }
+
+    // Загружаем сохранения
+    loadGame();
+
+    // Скрываем загрузочный экран
+    elements.loadingScreen.classList.remove('active');
+    elements.gameScreen.classList.add('active');
+    updateUI();
 }
 
 // Сохранение игры
@@ -180,8 +138,12 @@ function saveGame() {
 function loadGame() {
     const saved = localStorage.getItem('kopatel_game');
     if (saved) {
-        const parsed = JSON.parse(saved);
-        Object.assign(gameState, parsed);
+        try {
+            const parsed = JSON.parse(saved);
+            Object.assign(gameState, parsed);
+        } catch(e) {
+            console.warn('Save corrupted, using default');
+        }
     }
 }
 
@@ -192,32 +154,25 @@ function updateUI() {
     elements.playerLevel.textContent = gameState.player.level;
     elements.clickPower.textContent = gameState.player.clickPower;
     
-    // Обновление текущей руды
     const ore = gameState.currentOre;
     elements.currentOre.textContent = ore.name;
     
-    // Обновление прогресс-бара
     const progress = (ore.progress / ore.required) * 100;
     elements.oreProgressFill.style.width = `${Math.min(progress, 100)}%`;
     elements.oreProgressText.textContent = `${ore.progress} / ${ore.required}`;
     
-    // Обновление отображения руды
     const oreDisplay = elements.oreDisplay.querySelector('.ore-icon');
     const oreName = elements.oreDisplay.querySelector('.ore-name');
     oreDisplay.textContent = ore.icon;
     oreName.textContent = ore.name;
     
-    // Обновление инвентаря
     updateInventory();
-    
-    // Сохранение игры
     saveGame();
 }
 
 // Обновление инвентаря
 function updateInventory() {
     elements.inventoryGrid.innerHTML = '';
-    
     const inventoryItems = Object.entries(gameState.inventory);
     
     if (inventoryItems.length === 0) {
@@ -252,8 +207,8 @@ function showOreInfo(oreType) {
             <div style="font-size: 60px; margin: 20px 0;">${ore.icon}</div>
             <p style="margin-bottom: 10px;">В наличии: ${count} шт.</p>
             <p style="margin-bottom: 10px;">Цена продажи: ${shopItem.sellPrice} монет</p>
-            <button class="btn-sell" onclick="sellOre('${oreType}', 1)" style="margin: 5px;">Продать 1</button>
-            <button class="btn-sell" onclick="sellOre('${oreType}', 'all')" style="margin: 5px;">Продать все</button>
+            <button class="btn-sell" onclick="sellOre('${oreType}', 1)" style="margin: 5px; padding: 10px 20px; background: #27ae60; border: none; border-radius: 5px; color: white; cursor: pointer;">Продать 1</button>
+            <button class="btn-sell" onclick="sellOre('${oreType}', 'all')" style="margin: 5px; padding: 10px 20px; background: #27ae60; border: none; border-radius: 5px; color: white; cursor: pointer;">Продать все</button>
         </div>
     `);
 }
@@ -289,16 +244,13 @@ function mineOre() {
     gameState.currentOre.progress += clickPower;
     gameState.player.totalClicks++;
     
-    // Анимация частиц
     createParticles();
     
-    // Анимация нажатия
     elements.mineButton.style.transform = 'scale(0.9)';
     setTimeout(() => {
         elements.mineButton.style.transform = '';
     }, 100);
     
-    // Проверка на завершение добычи
     if (gameState.currentOre.progress >= gameState.currentOre.required) {
         completeOre();
     }
@@ -311,23 +263,16 @@ function completeOre() {
     const oreType = gameState.currentOre.type;
     const ore = gameState.ores[oreType];
     
-    // Добавление руды в инвентарь
     if (!gameState.inventory[oreType]) {
         gameState.inventory[oreType] = 0;
     }
     gameState.inventory[oreType]++;
     gameState.player.totalOres++;
     
-    // Начисление опыта
     gameState.player.experience += ore.expReward;
-    
-    // Проверка повышения уровня
     checkLevelUp();
     
-    // Сброс прогресса
     gameState.currentOre.progress = 0;
-    
-    // Выбор следующей руды
     selectNextOre();
     
     showNotification(`Добыта ${ore.name}! +${ore.expReward} опыта`);
@@ -339,11 +284,8 @@ function selectNextOre() {
         .filter(([type, ore]) => ore.unlockLevel <= gameState.player.level)
         .map(([type, ore]) => ({ type, ...ore }));
     
-    if (availableOres.length === 0) {
-        return;
-    }
+    if (availableOres.length === 0) return;
     
-    // Случайный выбор руды с учетом уровня
     const randomOre = availableOres[Math.floor(Math.random() * availableOres.length)];
     
     gameState.currentOre = {
@@ -567,4 +509,19 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
                 showShop();
                 break;
             case 'upgrades':
-                showUpgrades(
+                showUpgrades();
+                break;
+            case 'achievements':
+                showAchievements();
+                break;
+        }
+    });
+});
+
+// Глобальные функции для onclick
+window.sellOre = sellOre;
+window.upgradePickaxe = upgradePickaxe;
+window.closeModal = closeModal;
+
+// Запуск приложения
+initApp();
